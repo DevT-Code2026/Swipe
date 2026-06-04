@@ -10,14 +10,15 @@
 
 Use these values when Hostinger asks for project settings:
 
-- Framework: `Express`
+- Framework: `Other` (or `Express` if Hostinger accepts it)
 - Root directory: `.`
-- Install command: `npm run install:all`
+- Entry file: `app.js`
+- Install command: `npm install`
 - Build command: `npm run build`
 - Start command: `npm start`
 - Output/build directory: `client/dist`
 
-If Hostinger shows "Unsupported framework or invalid project structure", choose `Other` instead of auto-detect and use the same commands above. Confirm the repository includes the root files `package.json`, `package-lock.json`, `server.js`, `app.js`, and `index.js`. Do not point Hostinger at only the `client/` folder unless you are deploying the frontend without the API.
+If Hostinger shows "Unsupported framework or invalid project structure", choose `Other` instead of auto-detect and use the same commands above. Confirm the repository includes the root files `package.json`, `package-lock.json`, `app.js`, `server.js`, and `index.js`. Do not point Hostinger at only the `client/` folder unless you are deploying the frontend without the API.
 
 ## Container image workflow
 

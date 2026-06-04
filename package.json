@@ -2,7 +2,7 @@
   "name": "creativeswipe",
   "version": "1.0.0",
   "private": true,
-  "main": "server.js",
+  "main": "app.js",
   "engines": {
     "node": ">=20"
   },
@@ -11,10 +11,10 @@
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:client\"",
     "dev:client": "cd client && npm run dev",
     "dev:api": "cd api && npm start",
-    "build": "cd client && npm run build",
+    "build": "npm install --prefix client && npm run build --prefix client",
     "test:smoke": "playwright test tests/smoke.spec.js",
-    "start": "node server.js",
-    "install:all": "npm install && cd client && npm install && cd ../api && npm install",
+    "start": "node app.js",
+    "install:all": "npm install && npm install --prefix client",
     "docker:build": "docker build -t creativeswipe .",
     "docker:run": "docker run -p 8080:8080 --env-file .env creativeswipe"
   },
