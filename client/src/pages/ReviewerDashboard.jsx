@@ -1,9 +1,31 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import RoleFlowToggle from '../components/RoleFlowToggle';
-import BackButton from '../components/BackButton';
+
+function normalize(value, fallback) {
+  const text = String(value || '').trim();
+  return text || fallback;
+}
+
+function formatRelativeTime(value) {
+  if (!value) return 'No recent activity';
+  const time = new Date(value).getTime();
+  if (!time) return 'No recent activity';
+  const delta = Math.max(0, Date.now() - time);
+  const minutes = Math.floor(delta / 60000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function isVideoAsset(image) {
+  const source = String(image?.contentType || image?.fileName || '').toLowerCase();
+  return source.startsWith('video/') || /\.(mp4|mov|avi|webm|mkv)$/i.test(source);
+}
 
 export default function ReviewerDashboard() {
   const navigate = useNavigate();
@@ -12,34 +34,68 @@ export default function ReviewerDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const fetchSessions = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    try {
+      const data = await api.listReviewerSessions();
+      setSessions(data.sessions || []);
+      setError('');
+    } catch (err) {
+      setSessions([]);
+      setError(err.message || 'Failed to load sessions');
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const safeFetch = async (showLoading = false) => {
+      if (!active) return;
+      await fetchSessions(showLoading);
+    };
+
+    safeFetch(true);
+
+    const refreshOnFocus = () => {
+      safeFetch(false);
+    };
+
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        safeFetch(false);
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      safeFetch(false);
+    }, 15000);
+
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
+    };
+  }, [fetchSessions]);
+
   const doneSessions = sessions.filter((session) => session.reviewerStatus === 'done');
   const uniqueClients = new Set(doneSessions.map((session) => session.clientName || session.clientId || 'Client')).size;
   const uniqueProjects = new Set(doneSessions.map((session) => session.projectName || session.projectId || 'Project')).size;
 
-  useEffect(() => {
-    api
-      .listReviewerSessions()
-      .then((data) => setSessions(data.sessions || []))
-      .catch((err) => setError(err.message || 'Failed to load sessions'))
-      .finally(() => setLoading(false));
-  }, []);
-
-  const normalize = (value, fallback) => {
-    const text = String(value || '').trim();
-    return text || fallback;
-  };
-
   const groupedClients = useMemo(() => {
     const groups = doneSessions.reduce((acc, session) => {
       const clientId = session.clientId || `client-${normalize(session.clientName, 'unknown').toLowerCase()}`;
-      const clientName = normalize(session.clientName, 'Unknown Client');
       const projectId = session.projectId || `project-${normalize(session.projectName, 'unknown').toLowerCase()}`;
-      const projectName = normalize(session.projectName, 'Untitled Project');
 
       if (!acc[clientId]) {
         acc[clientId] = {
           clientId,
-          clientName,
+          clientName: normalize(session.clientName, 'Unknown Client'),
           projects: {},
         };
       }
@@ -47,7 +103,7 @@ export default function ReviewerDashboard() {
       if (!acc[clientId].projects[projectId]) {
         acc[clientId].projects[projectId] = {
           projectId,
-          projectName,
+          projectName: normalize(session.projectName, 'Untitled Project'),
           sessions: [],
         };
       }
@@ -62,56 +118,83 @@ export default function ReviewerDashboard() {
         projects: Object.values(client.projects)
           .map((project) => ({
             ...project,
-            sessions: [...project.sessions].sort((a, b) => {
-              const aTime = new Date(a.reviewerSubmittedAt || a.updatedAt || 0).getTime();
-              const bTime = new Date(b.reviewerSubmittedAt || b.updatedAt || 0).getTime();
-              return bTime - aTime;
-            }),
+            sessions: [...project.sessions].sort(
+              (left, right) =>
+                new Date(right.reviewerSubmittedAt || right.updatedAt || 0) -
+                new Date(left.reviewerSubmittedAt || left.updatedAt || 0)
+            ),
           }))
-          .sort((a, b) => a.projectName.localeCompare(b.projectName)),
+          .sort((left, right) => left.projectName.localeCompare(right.projectName)),
       }))
-      .sort((a, b) => a.clientName.localeCompare(b.clientName));
+      .sort((left, right) => left.clientName.localeCompare(right.clientName));
   }, [doneSessions]);
 
   const renderStatus = (status) => {
-    const normalized = String(status || 'draft').toLowerCase();
-    const cls = normalized === 'active' ? 'badge-active' : normalized === 'closed' ? 'badge-closed' : 'badge-draft';
-    return <span className={`badge ${cls}`}>{normalized}</span>;
+    const normalizedStatus = String(status || 'draft').toLowerCase();
+    const cls =
+      normalizedStatus === 'active'
+        ? 'badge-active'
+        : normalizedStatus === 'closed'
+          ? 'badge-closed'
+          : 'badge-draft';
+    return <span className={`badge ${cls}`}>{normalizedStatus}</span>;
   };
 
-  const timeAgo = (dateStr) => {
-    if (!dateStr) return 'just now';
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
-  };
+  const showBecomeSender = !reviewer?.hasSenderAccess;
 
   return (
     <div className="app-shell">
       <div className="page">
-        <div className="header-bar anim-fade-up" style={{ marginBottom: 14 }}>
-          <div>
-            <div style={{ marginBottom: 8 }}>
-              <BackButton />
-            </div>
+        <div className="header-bar header-bar-dashboard anim-fade-up" style={{ marginBottom: 14 }}>
+          <div className="header-bar-dashboard-top">
             <div className="logo">
               Creative<span>Swipe</span>
             </div>
-            <div style={{ fontSize: 14, color: 'var(--sub)', marginTop: 4 }}>
-              Reviewer: {reviewer?.name || reviewer?.email || 'Account'}
-            </div>
+            <button className="btn-ghost" onClick={reviewerLogout}>
+              Logout
+            </button>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <button className="btn-ghost" onClick={reviewerLogout}>Logout</button>
+          <div className="header-bar-dashboard-subtitle">
+            Reviewer: {reviewer?.name || reviewer?.email || 'Account'}
           </div>
         </div>
 
-        <div className="anim-fade-up" style={{ marginBottom: 10 }}>
-          <RoleFlowToggle active="receiver" senderPath="/" receiverPath="/reviewer" />
+        <div className="anim-fade-up" style={{ marginBottom: 12 }}>
+          <RoleFlowToggle active="receiver" />
         </div>
+
+        {showBecomeSender && (
+          <div
+            className="anim-fade-up"
+            style={{
+              marginBottom: 14,
+              padding: '14px 16px',
+              borderRadius: 16,
+              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(255,255,255,0.02)',
+            }}
+          >
+            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>Want to become a sender?</div>
+            <div style={{ fontSize: 13, color: 'var(--sub)', lineHeight: 1.5, marginBottom: 12 }}>
+              Use the same name and email to create a sender account and start sharing review links.
+            </div>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() =>
+                navigate('/login', {
+                  state: {
+                    mode: 'register',
+                    name: reviewer?.name || '',
+                    email: reviewer?.email || '',
+                  },
+                })
+              }
+            >
+              Become a Sender
+            </button>
+          </div>
+        )}
 
         {!loading && !error && (
           <div className="stats-grid-3" style={{ marginBottom: 14 }}>
@@ -120,11 +203,11 @@ export default function ReviewerDashboard() {
               <div className="label">Reviews Done</div>
             </div>
             <div className="stat-card">
-              <div className="num">{uniqueClients}</div>
+              <div className="num" style={{ color: 'var(--like)' }}>{uniqueClients}</div>
               <div className="label">Clients</div>
             </div>
             <div className="stat-card">
-              <div className="num">{uniqueProjects}</div>
+              <div className="num" style={{ color: 'var(--accent)' }}>{uniqueProjects}</div>
               <div className="label">Projects</div>
             </div>
           </div>
@@ -146,6 +229,7 @@ export default function ReviewerDashboard() {
               <div key={client.clientId} className="dashboard-client-card fade-in">
                 <div className="dashboard-card-header" style={{ marginBottom: 8 }}>
                   <div>
+                    <div className="dashboard-entity-label">Client</div>
                     <div className="dashboard-client-title">{client.clientName}</div>
                     <div className="dashboard-client-meta">
                       {client.projects.length} project{client.projects.length !== 1 ? 's' : ''}
@@ -164,30 +248,16 @@ export default function ReviewerDashboard() {
 
                     const projectImages = project.sessions
                       .flatMap((item) => item.previewImages || [])
-                      .filter((image, idx, list) => image?.id && list.findIndex((candidate) => candidate.id === image.id) === idx)
+                      .filter((image, index, list) => image?.id && list.findIndex((candidate) => candidate.id === image.id) === index)
                       .slice(0, 16);
 
-                    const projectPostCount = project.sessions.reduce(
-                      (sum, item) => sum + (Number(item.postCount) || 0),
-                      0
-                    );
-                    const hasAnyUploads = project.sessions.some((item) => (Number(item.imageCount) || 0) > 0);
-                    const resolvedPostCount = projectPostCount > 0 ? projectPostCount : hasAnyUploads ? 1 : 0;
-
-                    const totalReviewsGiven = project.sessions.reduce(
-                      (sum, item) => sum + (Number(item.reviewerSubmissionCount) || 0),
-                      0
-                    );
-
-                    const totalDecisions = project.sessions.reduce(
-                      (sum, item) => sum + (Number(item.reviewerDecisionCount) || 0),
-                      0
-                    );
-
-                    const totalComments = project.sessions.reduce(
-                      (sum, item) => sum + (Number(item.reviewerAnnotationCount) || 0),
-                      0
-                    );
+                    const postCount = project.sessions.reduce((sum, item) => sum + (Number(item.postCount) || 0), 0);
+                    const fallbackImages = project.sessions.reduce((sum, item) => sum + (Number(item.imageCount) || 0), 0);
+                    const imageCount = projectImages.length > 0 ? projectImages.length : fallbackImages;
+                    const totalApprovals = project.sessions.reduce((sum, item) => sum + (Number(item.reviewerLikeCount) || 0), 0);
+                    const totalRejections = project.sessions.reduce((sum, item) => sum + (Number(item.reviewerDislikeCount) || 0), 0);
+                    const totalComments = project.sessions.reduce((sum, item) => sum + (Number(item.reviewerAnnotationCount) || 0), 0);
+                    const lastActivity = latestSession?.reviewerSubmittedAt || latestSession?.updatedAt || null;
 
                     return (
                       <div key={project.projectId} className="dashboard-project-card">
@@ -199,11 +269,21 @@ export default function ReviewerDashboard() {
                             {projectImages.length > 0 ? (
                               projectImages.map((image) => (
                                 <div key={image.id} className="dashboard-thumb-wrap">
-                                  <img
-                                    src={image.url}
-                                    alt={image.fileName || 'Creative asset'}
-                                    className="dashboard-thumb"
-                                  />
+                                  {isVideoAsset(image) ? (
+                                    <video
+                                      src={image.url || image.signedUrl}
+                                      className="dashboard-thumb"
+                                      muted
+                                      playsInline
+                                      preload="metadata"
+                                    />
+                                  ) : (
+                                    <img
+                                      src={image.url || image.signedUrl}
+                                      alt={image.fileName || 'Creative asset'}
+                                      className="dashboard-thumb"
+                                    />
+                                  )}
                                   {Number(image.rowOrder) > 0 && (
                                     <span className="dashboard-post-badge">P{image.rowOrder}</span>
                                   )}
@@ -215,22 +295,32 @@ export default function ReviewerDashboard() {
                           </div>
 
                           <div className="dashboard-session-topline">
-                            <div className="dashboard-project-title">{project.projectName}</div>
+                            <div>
+                              <div className="dashboard-entity-label dashboard-entity-label-project">Project</div>
+                              <div className="dashboard-project-title">{project.projectName}</div>
+                            </div>
                             <div>{renderStatus(projectStatus)}</div>
                           </div>
 
-                          <div style={{ fontSize: 12, color: 'var(--sub)', marginTop: 4, marginBottom: 6 }}>
-                            {project.sessions.length} session{project.sessions.length !== 1 ? 's' : ''} · {resolvedPostCount} post{resolvedPostCount !== 1 ? 's' : ''} · {projectImages.length > 0 ? projectImages.length : project.sessions.reduce((sum, item) => sum + (Number(item.imageCount) || 0), 0)} image(s)
+                          <div style={{ fontSize: 12, color: 'var(--sub)', marginTop: 4, marginBottom: 8 }}>
+                            {postCount} post{postCount !== 1 ? 's' : ''} | {imageCount} image{imageCount !== 1 ? 's' : ''}
                           </div>
 
-                          <div className="dashboard-reviewer-row" style={{ marginBottom: 6 }}>
-                            <div className="dashboard-reviewer-name">Total reviews given</div>
-                            <div className="dashboard-reviewer-state dashboard-reviewer-done">{totalReviewsGiven}</div>
+                          <div className="dashboard-reviewer-row dashboard-reviewer-row-restored">
+                            <div className="dashboard-reviewer-list">
+                              <div className="dashboard-reviewer-name dashboard-reviewer-name-stack">
+                                {reviewer?.name || reviewer?.email || 'Reviewer'}
+                              </div>
+                            </div>
+                            <div className="dashboard-reviewer-metrics">
+                              <span className="metric-chip metric-chip-like">{Math.max(0, totalApprovals)}</span>
+                              <span className="metric-chip metric-chip-dislike">{Math.max(0, totalRejections)}</span>
+                            </div>
                           </div>
 
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, color: 'var(--sub)', fontSize: 12 }}>
-                            <div>{totalDecisions} decisions · {totalComments} comments</div>
-                            <div>{latestSession?.reviewerSubmittedAt ? timeAgo(latestSession.reviewerSubmittedAt) : timeAgo(latestSession?.updatedAt)}</div>
+                          <div className="dashboard-project-foot">
+                            <div>{totalComments} comment{totalComments !== 1 ? 's' : ''}</div>
+                            <div className="dashboard-project-time">{formatRelativeTime(lastActivity)}</div>
                           </div>
                         </div>
                       </div>

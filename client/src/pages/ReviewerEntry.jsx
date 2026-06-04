@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
-import BackButton from '../components/BackButton';
 
 export default function ReviewerEntry() {
   const { sessionId } = useParams();
@@ -17,6 +16,7 @@ export default function ReviewerEntry() {
 
   useEffect(() => {
     let mounted = true;
+
     api
       .getPublicSessionPreview(sessionId)
       .then((data) => {
@@ -34,8 +34,8 @@ export default function ReviewerEntry() {
     };
   }, [sessionId]);
 
-  const handleJoin = async (e) => {
-    e.preventDefault();
+  const handleJoin = async (event) => {
+    event.preventDefault();
     setError('');
     setLoading(true);
 
@@ -46,9 +46,7 @@ export default function ReviewerEntry() {
       sessionStorage.setItem('reviewerSessionId', sessionId);
       navigate(`/r/${sessionId}/review`);
     } catch (err) {
-      if (err.message?.includes('password')) {
-        setShowPassword(true);
-      }
+      if (err.message?.includes('password')) setShowPassword(true);
       setError(err.message || 'Failed to join session');
     } finally {
       setLoading(false);
@@ -57,47 +55,84 @@ export default function ReviewerEntry() {
 
   return (
     <div className="app-shell" style={{ justifyContent: 'center' }}>
-      <div className="page" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '100%' }}>
+      <div
+        className="page"
+        style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: '100%' }}
+      >
         <div style={{ maxWidth: 420, width: '100%', margin: '0 auto' }}>
-          <div style={{ marginBottom: 10 }}>
-            <BackButton />
-          </div>
-
-          {/* Hero Icon */}
           <div className="anim-fade-up" style={{ textAlign: 'center', marginBottom: 32 }}>
-            <div style={{
-              width: 80, height: 80, borderRadius: 24,
-              background: 'linear-gradient(135deg, var(--accent-dim) 0%, rgba(61,255,143,0.08) 100%)',
-              border: '1px solid rgba(232,255,71,0.15)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 36, margin: '0 auto 24px',
-              transform: 'rotate(-6deg)',
-              boxShadow: '0 8px 32px rgba(232,255,71,0.1)',
-            }}>
-              🎨
+            <div
+              style={{
+                width: 80,
+                height: 80,
+                borderRadius: 24,
+                background: 'linear-gradient(135deg, var(--accent-dim) 0%, rgba(61,255,143,0.08) 100%)',
+                border: '1px solid rgba(232,255,71,0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 24,
+                fontWeight: 800,
+                margin: '0 auto 24px',
+                transform: 'rotate(-6deg)',
+                boxShadow: '0 8px 32px rgba(232,255,71,0.1)',
+              }}
+            >
+              CS
             </div>
             <div className="logo" style={{ fontSize: 28, justifyContent: 'center', marginBottom: 12 }}>
               Creative<span>Swipe</span>
             </div>
-            <p style={{ fontSize: 15, color: 'var(--sub)', lineHeight: 1.6, maxWidth: 300, margin: '0 auto' }}>
-              You've been invited to review creative assets. Swipe to approve or reject.
+            <p
+              style={{
+                fontSize: 15,
+                color: 'var(--sub)',
+                lineHeight: 1.6,
+                maxWidth: 300,
+                margin: '0 auto',
+              }}
+            >
+              You have been invited to review creative assets. Swipe to approve or reject.
             </p>
           </div>
 
           <div className="glass-panel anim-fade-up" style={{ marginBottom: 16, padding: 14, overflow: 'hidden' }}>
-            <div style={{ fontSize: 11, letterSpacing: '0.08em', color: 'var(--sub)', textTransform: 'uppercase', marginBottom: 8 }}>
+            <div
+              style={{
+                fontSize: 11,
+                letterSpacing: '0.08em',
+                color: 'var(--sub)',
+                textTransform: 'uppercase',
+                marginBottom: 8,
+              }}
+            >
               Work Preview
             </div>
 
             {previewLoading ? (
               <div style={{ height: 120, borderRadius: 10, background: 'rgba(255,255,255,0.05)' }} />
-            ) : preview?.previewImage?.url ? (
+            ) : (preview?.previewImage?.url || preview?.previewImage?.signedUrl) ? (
               <div className="review-entry-preview-wrap">
-                <img src={preview.previewImage.url} alt="Session preview" className="review-entry-preview-blur" />
+                <img
+                  src={preview.previewImage.url || preview.previewImage.signedUrl}
+                  alt="Session preview"
+                  className="review-entry-preview-blur"
+                />
                 <div className="review-entry-preview-overlay" />
               </div>
             ) : (
-              <div style={{ height: 120, borderRadius: 10, background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sub)', fontSize: 12 }}>
+              <div
+                style={{
+                  height: 120,
+                  borderRadius: 10,
+                  background: 'rgba(255,255,255,0.05)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--sub)',
+                  fontSize: 12,
+                }}
+              >
                 Preview unavailable
               </div>
             )}
@@ -106,12 +141,13 @@ export default function ReviewerEntry() {
               <div style={{ color: 'var(--text)', fontWeight: 700, marginBottom: 2 }}>
                 {preview?.session?.title || 'Shared Review'}
               </div>
-              <div>{preview?.session?.clientName || 'Client'} · {preview?.session?.projectName || 'Project'}</div>
+              <div>
+                {preview?.session?.clientName || 'Client'} | {preview?.session?.projectName || 'Project'}
+              </div>
               <div>{preview?.imageCount || 0} asset(s)</div>
             </div>
           </div>
 
-          {/* Entry form */}
           <form
             onSubmit={handleJoin}
             className="glass-panel anim-fade-up"
@@ -123,7 +159,7 @@ export default function ReviewerEntry() {
                 className="field"
                 placeholder="Enter your name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(event) => setName(event.target.value)}
                 required
                 autoFocus
               />
@@ -136,7 +172,7 @@ export default function ReviewerEntry() {
                 type="email"
                 placeholder="you@company.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(event) => setEmail(event.target.value)}
                 required
               />
             </div>
@@ -149,7 +185,7 @@ export default function ReviewerEntry() {
                   type="password"
                   placeholder="Enter password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(event) => setPassword(event.target.value)}
                 />
               </div>
             )}
@@ -157,19 +193,18 @@ export default function ReviewerEntry() {
             {error && <div className="error-box">{error}</div>}
 
             <button type="submit" className="btn-accent" disabled={loading || !name.trim() || !email.trim()}>
-              {loading ? 'Joining…' : 'Start Reviewing →'}
+              {loading ? 'Joining...' : 'Start Reviewing'}
             </button>
           </form>
 
-          {/* Instructions */}
           <div className="instruction-row anim-fade-up" style={{ animationDelay: '0.2s', marginTop: 32 }}>
             {[
-              { icon: '👈', label: 'Reject' },
-              { icon: '💬', label: 'Post Comment' },
-              { icon: '👉', label: 'Approve' },
+              { iconClass: 'instruction-icon-reject', label: 'Reject' },
+              { iconClass: 'instruction-icon-comment', label: 'Post Comment' },
+              { iconClass: 'instruction-icon-approve', label: 'Approve' },
             ].map((item) => (
               <div key={item.label} className="instruction-item">
-                <div className="instruction-icon">{item.icon}</div>
+                <div className={`instruction-icon ${item.iconClass}`} />
                 <span className="instruction-label">{item.label}</span>
               </div>
             ))}

@@ -11,7 +11,7 @@ export default function BackButton({ label = 'Back' }) {
       onClick={() => navigate(-1)}
       aria-label={label}
     >
-      ← {label}
+      &lt; {label}
     </button>
   );
 }
