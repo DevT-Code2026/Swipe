@@ -17,7 +17,7 @@ Use these values when Hostinger asks for project settings:
 - Start command: `npm start`
 - Output/build directory: `client/dist`
 
-If Hostinger shows "Unsupported framework or invalid project structure", confirm the repository includes the root files `package.json`, `package-lock.json`, and `server.js`. Do not point Hostinger at only the `client/` folder unless you are deploying the frontend without the API.
+If Hostinger shows "Unsupported framework or invalid project structure", choose `Other` instead of auto-detect and use the same commands above. Confirm the repository includes the root files `package.json`, `package-lock.json`, `server.js`, `app.js`, and `index.js`. Do not point Hostinger at only the `client/` folder unless you are deploying the frontend without the API.
 
 ## Container image workflow
 

@@ -2,6 +2,10 @@
   "name": "creativeswipe",
   "version": "1.0.0",
   "private": true,
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "description": "CreativeSwipe — Collaborative Creative Review Platform",
   "scripts": {
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:client\"",
