@@ -110,6 +110,45 @@ class ApiService {
     this.setReviewerAccountToken(null);
   }
 
+  /** Redirects the browser to the Google OAuth flow for creator accounts. */
+  googleAuthCreator() {
+    window.location.href = '/api/auth/google';
+  }
+
+  /** Redirects the browser to the Google OAuth flow for reviewer accounts. */
+  googleAuthReviewer() {
+    window.location.href = '/api/reviewer/auth/google';
+  }
+
+  /**
+   * Reads ?google_token=<jwt>&role=<creator|reviewer> from the current URL,
+   * stores the token, cleans the URL, and returns { token, role } or null.
+   */
+  consumeOAuthToken() {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('google_token');
+    const role = params.get('role');
+    const errorParam = params.get('google_error');
+    if (errorParam) {
+      // Clean URL but signal the error
+      params.delete('google_error');
+      const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+      window.history.replaceState({}, '', clean);
+      return { error: errorParam };
+    }
+    if (!token) return null;
+    if (role === 'creator') {
+      this.setCreatorToken(token);
+    } else if (role === 'reviewer') {
+      this.setReviewerAccountToken(token);
+    }
+    params.delete('google_token');
+    params.delete('role');
+    const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+    window.history.replaceState({}, '', clean);
+    return { token, role };
+  }
+
   async establishReceiverAccess() {
     const data = await this.request('POST', '/auth/establish-receiver');
     this.setReviewerAccountToken(data.token);

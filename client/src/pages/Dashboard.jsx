@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
@@ -22,11 +22,14 @@ function formatRelativeTime(value) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function formatBytes(bytes) {
+  return `${((bytes || 0) / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function isVideoAsset(image) {
   const source = String(image?.contentType || image?.fileName || '').toLowerCase();
   return source.startsWith('video/') || /\.(mp4|mov|avi|webm|mkv)$/i.test(source);
 }
-
 function reviewerKey(reviewer) {
   return normalize(reviewer?.email, normalize(reviewer?.name, 'reviewer'));
 }
@@ -38,25 +41,52 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [selectedClientId, setSelectedClientId] = useState('all');
 
+  const fetchSessions = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    try {
+      const data = await api.listSessions();
+      setSessions(data.sessions || []);
+    } catch {
+      setSessions([]);
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-    api
-      .listSessions()
-      .then((data) => {
-        if (mounted) setSessions(data.sessions || []);
-      })
-      .catch(() => {
-        if (mounted) setSessions([]);
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
+    let active = true;
+
+    const safeFetch = async (showLoading = false) => {
+      if (!active) return;
+      await fetchSessions(showLoading);
+    };
+
+    safeFetch(true);
+
+    const refreshOnFocus = () => {
+      safeFetch(false);
+    };
+
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        safeFetch(false);
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      safeFetch(false);
+    }, 15000);
+
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
 
     return () => {
-      mounted = false;
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
     };
-  }, []);
+  }, [fetchSessions]);
 
   const groupedClients = useMemo(() => {
     const groups = sessions.reduce((acc, session) => {
@@ -98,7 +128,14 @@ export default function Dashboard() {
               (session) => (Number(session.imageCount) || 0) > 0 || (session.previewImages || []).length > 0
             )
           )
-          .sort((left, right) => left.projectName.localeCompare(right.projectName)),
+          .sort((left, right) => {
+            // Newest project (by most-recent session date) first
+            const latestDate = (project) => {
+              const s = project.sessions[0];
+              return new Date(s?.updatedAt || s?.createdAt || 0).getTime();
+            };
+            return latestDate(right) - latestDate(left);
+          }),
       }))
       .filter((client) => client.projects.length > 0)
       .sort((left, right) => left.clientName.localeCompare(right.clientName));
@@ -141,21 +178,24 @@ export default function Dashboard() {
   return (
     <div className="app-shell">
       <div className="page">
-        <div className="header-bar anim-fade-up" style={{ marginBottom: 14 }}>
-          <div>
+        <div className="header-bar header-bar-dashboard anim-fade-up" style={{ marginBottom: 14 }}>
+          <div className="header-bar-dashboard-top">
             <div className="logo">
               Creative<span>Swipe</span>
             </div>
-            <div style={{ fontSize: 14, color: 'var(--sub)', marginTop: 4 }}>
-              Welcome, {creator?.name || creator?.email || 'Creator'}
-            </div>
+            <button className="btn-ghost" onClick={logout}>
+              Logout
+            </button>
           </div>
-          <button className="btn-ghost" onClick={logout}>
-            Logout
-          </button>
+          <div className="header-bar-dashboard-subtitle" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Welcome, {creator?.name || creator?.email || 'Creator'}</span>
+            <span style={{ fontSize: 13, fontWeight: 500, letterSpacing: '0.02em', color: (Number(creator?.usedBytes || 0) > 500 * 1024 * 1024) ? 'var(--fail)' : 'var(--sub)' }}>
+              {formatBytes(creator?.usedBytes || 0)} / 500.0 MB
+            </span>
+          </div>
         </div>
 
-        <div className="anim-fade-up" style={{ marginBottom: 10 }}>
+        <div className="anim-fade-up" style={{ marginBottom: 12 }}>
           <RoleFlowToggle active="sender" />
         </div>
 
@@ -226,7 +266,7 @@ export default function Dashboard() {
               {visibleClients.map((client) => (
                 <div key={client.clientId} className="dashboard-client-card fade-in">
                   <div className="dashboard-card-header" style={{ marginBottom: 10 }}>
-                    <div>
+                    <div className="dashboard-client-block">
                       <div className="dashboard-entity-label">Client</div>
                       <div className="dashboard-client-title">{client.clientName}</div>
                       <div className="dashboard-client-meta">
@@ -236,27 +276,22 @@ export default function Dashboard() {
                   </div>
 
                   <div className="dashboard-project-list">
-                    {client.projects.map((project) => {
-                      const latestSession = project.sessions[0] || null;
-                      const projectStatus = project.sessions.some((item) => String(item.status || '').toLowerCase() === 'active')
-                        ? 'active'
-                        : project.sessions.every((item) => String(item.status || '').toLowerCase() === 'closed')
-                          ? 'closed'
-                          : 'draft';
+                      {client.projects.map((project) => {
+                        const latestSession = project.sessions[0] || null;
+                        const projectStatus = String(latestSession?.status || 'draft').toLowerCase();
 
-                      const projectImages = project.sessions
-                        .flatMap((item) => item.previewImages || [])
-                        .filter((image, index, list) => image?.id && list.findIndex((candidate) => candidate.id === image.id) === index)
-                        .slice(0, 16);
+                        const projectImages = (latestSession?.previewImages || [])
+                          .filter((image, index, list) => image?.id && list.findIndex((candidate) => candidate.id === image.id) === index)
+                          .slice(0, 16);
 
-                      const postCount = project.sessions.reduce((sum, item) => sum + (Number(item.postCount) || 0), 0);
-                      const fallbackImages = project.sessions.reduce((sum, item) => sum + (Number(item.imageCount) || 0), 0);
-                      const imageCount = projectImages.length > 0 ? projectImages.length : fallbackImages;
-                      const reviewerSummaries = Array.from(
-                        project.sessions
-                          .flatMap((item) => item.reviewerProgress || [])
-                          .filter((reviewer) => String(reviewer.status || '').toLowerCase() === 'done')
-                          .reduce((acc, reviewer) => {
+                        const postCount = Number(latestSession?.postCount) || 0;
+                        const fallbackImages = Number(latestSession?.imageCount) || 0;
+                        const imageCount = projectImages.length > 0 ? projectImages.length : fallbackImages;
+                        const reviewerSummaries = Array.from(
+                          [latestSession]
+                            .flatMap((item) => item.reviewerProgress || [])
+                            .filter((reviewer) => String(reviewer.status || '').toLowerCase() === 'done')
+                            .reduce((acc, reviewer) => {
                             const key = reviewerKey(reviewer);
                             const existing = acc.get(key) || {
                               name: normalize(reviewer.name || reviewer.email, 'Reviewer'),
@@ -288,16 +323,15 @@ export default function Dashboard() {
                         const leftTime = new Date(left.submittedAt || 0).getTime();
                         if (rightTime !== leftTime) return rightTime - leftTime;
                         return left.name.localeCompare(right.name);
-                      });
-                      const visibleReviewerSummaries = reviewerSummaries.slice(0, 3);
-                      const extraReviewerCount = Math.max(0, reviewerSummaries.length - visibleReviewerSummaries.length);
-                      const totalComments = project.sessions.reduce((sum, item) => sum + (Number(item.annotationCount) || 0), 0);
-                      const lastActivity = project.sessions
-                        .map((item) => item.updatedAt || item.createdAt)
-                        .filter(Boolean)
-                        .sort((left, right) => new Date(right) - new Date(left))[0];
+                        });
+                        const visibleReviewerSummaries = reviewerSummaries.slice(0, 3);
+                        const extraReviewerCount = Math.max(0, reviewerSummaries.length - visibleReviewerSummaries.length);
+                        const totalLikes = Number(latestSession?.likeCount) || 0;
+                        const totalDislikes = Number(latestSession?.dislikeCount) || 0;
+                        const totalComments = Number(latestSession?.annotationCount) || 0;
+                        const lastActivity = latestSession?.updatedAt || latestSession?.createdAt || null;
 
-                      return (
+                        return (
                         <div key={project.projectId} className="dashboard-project-card">
                           <div className="session-item" onClick={() => latestSession && navigate(`/sessions/${latestSession.id}`)}>
                             <div className="dashboard-thumb-scroll">
@@ -330,7 +364,7 @@ export default function Dashboard() {
                             </div>
 
                             <div className="dashboard-session-topline">
-                              <div>
+                              <div className="dashboard-project-block">
                                 <div className="dashboard-entity-label dashboard-entity-label-project">Project</div>
                                 <div className="dashboard-project-title">{project.projectName}</div>
                               </div>
@@ -347,17 +381,7 @@ export default function Dashboard() {
                                   <>
                                     {visibleReviewerSummaries.map((reviewer) => (
                                       <div key={reviewerKey(reviewer)} className="dashboard-reviewer-entry">
-                                        <div className="dashboard-reviewer-name dashboard-reviewer-name-stack">
-                                          {reviewer.name}
-                                        </div>
-                                        <div className="dashboard-reviewer-metrics dashboard-reviewer-metrics-stack">
-                                          <span className="metric-chip metric-chip-like">
-                                            {Math.max(0, reviewer.likeCount)}
-                                          </span>
-                                          <span className="metric-chip metric-chip-dislike">
-                                            {Math.max(0, reviewer.dislikeCount)}
-                                          </span>
-                                        </div>
+                                        <div className="dashboard-reviewer-name dashboard-reviewer-name-stack">{reviewer.name}</div>
                                       </div>
                                     ))}
                                     {extraReviewerCount > 0 && (
@@ -369,6 +393,10 @@ export default function Dashboard() {
                                     No reviewers yet
                                   </div>
                                 )}
+                              </div>
+                              <div className="dashboard-reviewer-metrics dashboard-reviewer-metrics-stack">
+                                <span className="metric-chip metric-chip-like">{Math.max(0, totalLikes)}</span>
+                                <span className="metric-chip metric-chip-dislike">{Math.max(0, totalDislikes)}</span>
                               </div>
                             </div>
 

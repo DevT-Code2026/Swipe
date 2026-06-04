@@ -5,12 +5,16 @@ import { useAuth } from '../context/AuthContext';
 export default function ReviewComplete() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { reviewerAccountToken } = useAuth();
+  const { reviewerAccountToken, reviewer } = useAuth();
   const state = location.state || {};
   const { totalImages = 0, liked = 0, disliked = 0, annotationCount = 0 } = state;
 
   const handleViewDashboard = () => {
-    if (reviewerAccountToken) {
+    const submittedName = sessionStorage.getItem('reviewerName') || '';
+    const submittedEmail = String(sessionStorage.getItem('reviewerEmail') || '').trim().toLowerCase();
+    const activeReviewerEmail = String(reviewer?.email || '').trim().toLowerCase();
+
+    if (reviewerAccountToken && submittedEmail && activeReviewerEmail && submittedEmail === activeReviewerEmail) {
       navigate('/reviewer');
       return;
     }
@@ -18,8 +22,10 @@ export default function ReviewComplete() {
     navigate('/reviewer/login', {
       state: {
         mode: 'register',
-        name: sessionStorage.getItem('reviewerName') || '',
-        email: sessionStorage.getItem('reviewerEmail') || '',
+        name: submittedName,
+        email: submittedEmail,
+        notice:
+          'You reviewed with a different email than the receiver account currently signed in. Continue with this email to see the correct dashboard.',
       },
     });
   };

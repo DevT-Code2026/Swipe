@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -34,25 +34,54 @@ export default function ReviewerDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let mounted = true;
+  const fetchSessions = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    try {
+      const data = await api.listReviewerSessions();
+      setSessions(data.sessions || []);
+      setError('');
+    } catch (err) {
+      setSessions([]);
+      setError(err.message || 'Failed to load sessions');
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, []);
 
-    api
-      .listReviewerSessions()
-      .then((data) => {
-        if (mounted) setSessions(data.sessions || []);
-      })
-      .catch((err) => {
-        if (mounted) setError(err.message || 'Failed to load sessions');
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
+  useEffect(() => {
+    let active = true;
+
+    const safeFetch = async (showLoading = false) => {
+      if (!active) return;
+      await fetchSessions(showLoading);
+    };
+
+    safeFetch(true);
+
+    const refreshOnFocus = () => {
+      safeFetch(false);
+    };
+
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        safeFetch(false);
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      safeFetch(false);
+    }, 15000);
+
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
 
     return () => {
-      mounted = false;
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
     };
-  }, []);
+  }, [fetchSessions]);
 
   const doneSessions = sessions.filter((session) => session.reviewerStatus === 'done');
   const uniqueClients = new Set(doneSessions.map((session) => session.clientName || session.clientId || 'Client')).size;
@@ -116,21 +145,21 @@ export default function ReviewerDashboard() {
   return (
     <div className="app-shell">
       <div className="page">
-        <div className="header-bar anim-fade-up" style={{ marginBottom: 14 }}>
-          <div>
+        <div className="header-bar header-bar-dashboard anim-fade-up" style={{ marginBottom: 14 }}>
+          <div className="header-bar-dashboard-top">
             <div className="logo">
               Creative<span>Swipe</span>
             </div>
-            <div style={{ fontSize: 14, color: 'var(--sub)', marginTop: 4 }}>
-              Reviewer: {reviewer?.name || reviewer?.email || 'Account'}
-            </div>
+            <button className="btn-ghost" onClick={reviewerLogout}>
+              Logout
+            </button>
           </div>
-          <button className="btn-ghost" onClick={reviewerLogout}>
-            Logout
-          </button>
+          <div className="header-bar-dashboard-subtitle">
+            Reviewer: {reviewer?.name || reviewer?.email || 'Account'}
+          </div>
         </div>
 
-        <div className="anim-fade-up" style={{ marginBottom: 10 }}>
+        <div className="anim-fade-up" style={{ marginBottom: 12 }}>
           <RoleFlowToggle active="receiver" />
         </div>
 

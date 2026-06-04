@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import AnnotationView from '../components/AnnotationView';
+import VideoPlayer from '../components/VideoPlayer';
 
 function formatRelativeTime(value) {
   if (!value) return 'No recent activity';
@@ -26,6 +27,11 @@ function formatDateTime(value) {
 function normalizeText(value, fallback) {
   const text = String(value || '').trim();
   return text || fallback;
+}
+
+function formatTimestamp(value) {
+  const totalSeconds = Math.max(0, Math.floor(Number(value) || 0));
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`;
 }
 
 function openAsset(url) {
@@ -92,6 +98,55 @@ function FileCard({ image, onDelete, deleting }) {
         </div>
       </div>
     </article>
+  );
+}
+
+function VideoCommentPanel({ image, comments }) {
+  const playerRef = useRef(null);
+  const previewUrl = image?.url || image?.signedUrl || '';
+  const [activeTimestamp, setActiveTimestamp] = useState(null);
+
+  if (!previewUrl) return null;
+
+  return (
+    <div className="video-comment-panel">
+      <VideoPlayer
+        ref={playerRef}
+        src={previewUrl}
+        className="video-comment-player"
+        style={{ maxHeight: 'min(62vh, 520px)' }}
+      />
+      <div className="timestamp-comment-list">
+        {comments.map((comment, commentIndex) => {
+          const hasTimestamp = comment.timestampSec != null;
+          const isActive = hasTimestamp && activeTimestamp === comment.timestampSec;
+
+          if (!hasTimestamp) {
+            return (
+              <div key={`video-comment-static-${commentIndex}`} className="timestamp-comment-card">
+                <div className="timestamp-comment-copy">{normalizeText(comment.comment, 'No comment')}</div>
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={`video-comment-${commentIndex}`}
+              type="button"
+              className={`timestamp-comment-card timestamp-comment-button${isActive ? ' timestamp-comment-button-active' : ''}`}
+              onClick={() => {
+                playerRef.current?.seekTo?.(comment.timestampSec);
+                playerRef.current?.pause?.();
+                setActiveTimestamp(comment.timestampSec);
+              }}
+            >
+              <span className="timestamp-comment-badge">{formatTimestamp(comment.timestampSec)}</span>
+              <span className="timestamp-comment-copy">{normalizeText(comment.comment, 'No comment')}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -228,25 +283,26 @@ export default function SessionResults() {
               <button type="button" className="btn-back" onClick={() => navigate(-1)}>
                 &lt; Back
               </button>
-              <div className="logo">
+              <div className="logo logo-no-dot">
                 Creative<span>Swipe</span>
               </div>
             </div>
           </div>
-          <div className="results-header-copy">
-            <div className="dashboard-entity-label">Client</div>
-            <div className="results-client-line results-client-line-with-status">
-              <div className="results-client-name">
-                {normalizeText(session.clientName, 'Client')}
+            <div className="results-header-copy">
+              <div className="results-meta-group">
+                <div className="dashboard-entity-label results-entity-label">Client</div>
+                <div className="results-client-line results-client-line-with-status">
+                  <div className="results-client-name">
+                    {normalizeText(session.clientName, 'Client')}
+                </div>
+                <span className={`badge badge-${session.status}`}>{session.status}</span>
               </div>
-              <span className={`badge badge-${session.status}`}>{session.status}</span>
             </div>
-            <div className="dashboard-entity-label dashboard-entity-label-project">Project</div>
-            <div className="results-project-name">{normalizeText(session.projectName || session.title, 'Project')}</div>
-            <div className="results-project-copy">
-              Review link, files, and feedback.
+              <div className="results-meta-group">
+                <div className="dashboard-entity-label results-entity-label">Project</div>
+                <div className="results-project-name">{normalizeText(session.projectName || session.title, 'Project')}</div>
+              </div>
             </div>
-          </div>
         </header>
 
         <section className="results-panel">
@@ -385,100 +441,108 @@ export default function SessionResults() {
                       .forEach((annotation) => subAnnotations.push({ ...annotation, image }));
                   });
 
-                  const likes = (submission.decisions || []).filter((item) => item.liked).length;
-                  const dislikes = (submission.decisions || []).filter((item) => !item.liked).length;
+                  return (submission.decisions || []).map((decision, index) => {
+                    const image = images.find((item) => item.id === decision.imageId);
+                    const previewUrl = image?.url || image?.signedUrl || '';
+                    const comments = subAnnotations.filter((item) => item.imageId === decision.imageId);
+                    const likeCount = decision.liked ? 1 : 0;
+                    const dislikeCount = decision.liked ? 0 : 1;
+                    const isVideo = isVideoAsset(image);
 
-                  return (
-                    <article key={submission.id || visibleIndex} className="reviewer-card">
-                      <div className="reviewer-card-header">
-                        <div>
-                          <div className="reviewer-name-title">{reviewerName}</div>
-                          <div className="results-review-time">{formatDateTime(submission.submittedAt)}</div>
+                    return (
+                      <article key={`${submission.id || visibleIndex}-${decision.imageId}-${index}`} className="reviewer-card">
+                        <div className="reviewer-card-header">
+                          <div>
+                            <div className="reviewer-name-title">{reviewerName}</div>
+                            <div className="results-review-time">{formatDateTime(submission.submittedAt)}</div>
+                          </div>
+                          <div className="results-summary-counts">
+                            <span className="metric-chip metric-chip-like">{likeCount}</span>
+                            <span className="metric-chip metric-chip-dislike">{dislikeCount}</span>
+                            <span>{comments.length} comments</span>
+                          </div>
                         </div>
-                        <div className="results-summary-counts">
-                          <span className="metric-chip metric-chip-like">{likes}</span>
-                          <span className="metric-chip metric-chip-dislike">{dislikes}</span>
-                          <span>{subAnnotations.length} comments</span>
-                        </div>
-                      </div>
 
-                      <div className="history-list-panel">
-                        {(submission.decisions || []).map((decision, index) => {
-                          const image = images.find((item) => item.id === decision.imageId);
-                          const previewUrl = image?.url || image?.signedUrl || '';
-                          const comments = subAnnotations.filter((item) => item.imageId === decision.imageId);
-
-                          return (
-                            <div key={`${decision.imageId}-${index}`} className="history-comment-card">
-                              <div className="history-card">
-                                <div className="history-card-main">
+                        <div className="history-list-panel">
+                          <div className="history-comment-card">
+                            <div className="history-card">
+                              <div className="history-card-main">
+                                {!isVideo && (
                                   <div className="history-thumb">
                                     {previewUrl ? (
-                                      isVideoAsset(image) ? (
-                                        <video src={previewUrl} muted playsInline preload="metadata" />
-                                      ) : (
-                                        <img src={previewUrl} alt={image?.fileName || 'Asset'} />
-                                      )
+                                      <img src={previewUrl} alt={image?.fileName || 'Asset'} />
                                     ) : (
                                       <span className="history-thumb-fallback">No preview</span>
                                     )}
                                   </div>
+                                )}
 
-                                  <div className="history-card-copy">
-                                    <div className="history-card-title">
-                                      {normalizeText(image?.fileName, `Asset ${index + 1}`)}
-                                    </div>
-                                    <div className="history-card-meta">
-                                      {image?.rowOrder ? `Post ${image.rowOrder}` : getAssetTypeLabel(image)}
-                                    </div>
-                                    <div className="history-card-meta">
-                                      {decision.liked ? 'Approved' : 'Rejected'}
-                                    </div>
+                                <div className="history-card-copy">
+                                  <div className="history-card-title">
+                                    {normalizeText(image?.fileName, `Asset ${index + 1}`)}
                                   </div>
-                                </div>
-
-                                <div className="history-card-side">
-                                  <span className={`history-status ${decision.liked ? 'history-status-like' : 'history-status-dislike'}`}>
+                                  <div className="history-card-meta">
+                                    {image?.rowOrder ? `Post ${image.rowOrder}` : getAssetTypeLabel(image)}
+                                  </div>
+                                  <div className="history-card-meta">
                                     {decision.liked ? 'Approved' : 'Rejected'}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="history-view-btn"
-                                    onClick={() => openAsset(previewUrl)}
-                                    disabled={!previewUrl}
-                                  >
-                                    View
-                                  </button>
+                                  </div>
                                 </div>
                               </div>
 
-                              {comments.length > 0 && (
-                                <div className="history-comment-list">
-                                  {comments.map((comment, commentIndex) => (
-                                    <div key={`${decision.imageId}-comment-${commentIndex}`} className="history-comment-item">
-                                      <div className="history-comment-index">{commentIndex + 1}</div>
-                                      <div className="history-comment-copy">
-                                        <div>{normalizeText(comment.comment, 'No comment')}</div>
-                                        <div className="history-card-meta">
-                                          Pin at x:{Math.round(Number(comment.x) || 0)} y:{Math.round(Number(comment.y) || 0)}
-                                        </div>
+                              <div className="history-card-side">
+                                <span className={`history-status ${decision.liked ? 'history-status-like' : 'history-status-dislike'}`}>
+                                  {decision.liked ? 'Approved' : 'Rejected'}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="history-view-btn"
+                                  onClick={() => openAsset(previewUrl)}
+                                  disabled={!previewUrl}
+                                >
+                                  View
+                                </button>
+                              </div>
+                            </div>
+
+                            {comments.length > 0 && previewUrl && isVideo && (
+                              <div className="video-review-thread">
+                                <VideoCommentPanel image={image} comments={comments} />
+                              </div>
+                            )}
+
+                            {comments.length > 0 && (
+                              <div className="history-comment-list">
+                                {comments.map((comment, commentIndex) => (
+                                  <div key={`${decision.imageId}-comment-${commentIndex}`} className="history-comment-item">
+                                    <div className="history-comment-index">{commentIndex + 1}</div>
+                                    <div className="history-comment-copy">
+                                      <div>{normalizeText(comment.comment, 'No comment')}</div>
+                                      <div className="history-card-meta">
+                                        {comment.timestampSec != null ? (
+                                          <span className="timestamp-comment-inline">
+                                            {formatTimestamp(comment.timestampSec)}
+                                          </span>
+                                        ) : (
+                                          `Pin at x:${Math.round(Number(comment.x) || 0)} y:${Math.round(Number(comment.y) || 0)}`
+                                        )}
                                       </div>
                                     </div>
-                                  ))}
-                                </div>
-                              )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
 
-                              {comments.length > 0 && previewUrl && !isVideoAsset(image) && (
-                                <div className="annotation-panel">
-                                  <AnnotationView annotations={comments} imageUrl={previewUrl} />
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </article>
-                  );
+                            {comments.length > 0 && previewUrl && !isVideo && (
+                              <div className="annotation-panel">
+                                <AnnotationView annotations={comments} imageUrl={previewUrl} />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  });
                 })}
               </>
             )}

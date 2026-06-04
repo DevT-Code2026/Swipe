@@ -2,6 +2,9 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
+const https = require('https');
+const { parse: parseUrl } = require('url');
 const cors = require('cors');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
@@ -670,6 +673,7 @@ app.get('/api/reviewer/sessions/:id/history', async (req, res) => {
         comment: annotation.comment || '',
         x: annotation.x,
         y: annotation.y,
+        timestampSec: annotation.timestampSec,
         createdAt: annotation.createdAt || reviewerSubmission.submittedAt,
         fileName: image?.fileName || null,
         contentType: image?.contentType || null,
@@ -712,10 +716,150 @@ app.get('/api/auth/me', async (req, res) => {
     const creator = await db.getItem('creators', auth.creator.sub, auth.creator.sub);
     if (!creator) return res.status(404).json({ error: 'Creator not found' });
     const capabilities = await getCreatorCapabilities(creator);
-    res.json({ id: creator.id, email: creator.email, name: creator.name, ...capabilities });
+    const usedBytes = await getCreatorStorageUsageBytes(auth.creator.sub); res.json({ id: creator.id, email: creator.email, name: creator.name, usedBytes, ...capabilities });
   } catch (err) {
     console.error('Auth me error:', err);
     res.status(500).json({ error: 'Failed to get profile' });
+  }
+});
+
+
+// ── Google OAuth helpers ──
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const GOOGLE_CALLBACK_BASE = (process.env.GOOGLE_CALLBACK_BASE || 'https://giggidy.work').replace(/\/$/, '');
+
+function oauthState(role) {
+  const data = Buffer.from(JSON.stringify({ role, iat: Date.now() })).toString('base64url');
+  const sig = crypto.createHmac('sha256', process.env.JWT_SECRET || 'dev-secret').update(data).digest('base64url');
+  return data + '.' + sig;
+}
+
+function verifyOAuthState(state) {
+  const parts = (state || '').split('.');
+  if (parts.length !== 2) return null;
+  const [data, sig] = parts;
+  const expected = crypto.createHmac('sha256', process.env.JWT_SECRET || 'dev-secret').update(data).digest('base64url');
+  if (expected !== sig) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(data, 'base64url').toString());
+    if (Date.now() - parsed.iat > 10 * 60 * 1000) return null;
+    return parsed;
+  } catch { return null; }
+}
+
+function httpsPost(url, formData) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams(formData).toString();
+    const parsed = parseUrl(url);
+    const req = https.request(
+      { hostname: parsed.hostname, path: parsed.path, method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) } },
+      (res) => { let raw = ''; res.on('data', c => { raw += c; }); res.on('end', () => { try { resolve(JSON.parse(raw)); } catch(e) { reject(e); } }); }
+    );
+    req.on('error', reject); req.write(body); req.end();
+  });
+}
+
+function httpsGet(url) {
+  return new Promise((resolve, reject) => {
+    const parsed = parseUrl(url);
+    const fullPath = parsed.path + (parsed.search || '');
+    const req = https.request(
+      { hostname: parsed.hostname, path: fullPath, method: 'GET' },
+      (res) => { let raw = ''; res.on('data', c => { raw += c; }); res.on('end', () => { try { resolve(JSON.parse(raw)); } catch(e) { reject(e); } }); }
+    );
+    req.on('error', reject); req.end();
+  });
+}
+
+// GET /api/auth/google - redirect creator to Google
+app.get('/api/auth/google', (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(503).json({ error: 'Google login not configured' });
+  const state = oauthState('creator');
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_CALLBACK_BASE + '/api/auth/google/callback',
+    response_type: 'code', scope: 'openid email profile',
+    state, access_type: 'online', prompt: 'select_account',
+  });
+  res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + params);
+});
+
+// GET /api/auth/google/callback - creator OAuth callback
+app.get('/api/auth/google/callback', async (req, res) => {
+  await ensureInit();
+  const { code, state, error: oauthError } = req.query;
+  const base = GOOGLE_CALLBACK_BASE;
+  if (oauthError || !code) return res.redirect(base + '/login?google_error=' + encodeURIComponent(oauthError || 'cancelled'));
+  const sd = verifyOAuthState(state);
+  if (!sd || sd.role !== 'creator') return res.redirect(base + '/login?google_error=invalid_state');
+  try {
+    const td = await httpsPost('https://oauth2.googleapis.com/token', {
+      code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uri: GOOGLE_CALLBACK_BASE + '/api/auth/google/callback',
+      grant_type: 'authorization_code',
+    });
+    if (!td.access_token) return res.redirect(base + '/login?google_error=token_failed');
+    const ui = await httpsGet('https://www.googleapis.com/oauth2/v2/userinfo?access_token=' + td.access_token);
+    const email = normalizeEmail(ui.email);
+    const name = ui.name || (email ? email.split('@')[0] : 'User');
+    if (!email) return res.redirect(base + '/login?google_error=no_email');
+    let creator = await db.getCreatorByEmail(email);
+    if (!creator) {
+      creator = { id: uuidv4(), email, name, passwordHash: null, createdAt: new Date().toISOString(), authProvider: 'google' };
+      await db.createItem('creators', creator);
+    }
+    const token = generateCreatorToken(creator.id, creator.email);
+    return res.redirect(base + '/?google_token=' + encodeURIComponent(token) + '&role=creator');
+  } catch (err) {
+    console.error('Google creator callback error:', err);
+    return res.redirect(base + '/login?google_error=server_error');
+  }
+});
+
+// GET /api/reviewer/auth/google - redirect reviewer to Google
+app.get('/api/reviewer/auth/google', (req, res) => {
+  if (!GOOGLE_CLIENT_ID) return res.status(503).json({ error: 'Google login not configured' });
+  const state = oauthState('reviewer');
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_CALLBACK_BASE + '/api/reviewer/auth/google/callback',
+    response_type: 'code', scope: 'openid email profile',
+    state, access_type: 'online', prompt: 'select_account',
+  });
+  res.redirect('https://accounts.google.com/o/oauth2/v2/auth?' + params);
+});
+
+// GET /api/reviewer/auth/google/callback - reviewer OAuth callback
+app.get('/api/reviewer/auth/google/callback', async (req, res) => {
+  await ensureInit();
+  const { code, state, error: oauthError } = req.query;
+  const base = GOOGLE_CALLBACK_BASE;
+  if (oauthError || !code) return res.redirect(base + '/reviewer/login?google_error=' + encodeURIComponent(oauthError || 'cancelled'));
+  const sd = verifyOAuthState(state);
+  if (!sd || sd.role !== 'reviewer') return res.redirect(base + '/reviewer/login?google_error=invalid_state');
+  try {
+    const td = await httpsPost('https://oauth2.googleapis.com/token', {
+      code, client_id: GOOGLE_CLIENT_ID, client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uri: GOOGLE_CALLBACK_BASE + '/api/reviewer/auth/google/callback',
+      grant_type: 'authorization_code',
+    });
+    if (!td.access_token) return res.redirect(base + '/reviewer/login?google_error=token_failed');
+    const ui = await httpsGet('https://www.googleapis.com/oauth2/v2/userinfo?access_token=' + td.access_token);
+    const email = normalizeEmail(ui.email);
+    const name = ui.name || (email ? email.split('@')[0] : 'User');
+    if (!email) return res.redirect(base + '/reviewer/login?google_error=no_email');
+    let reviewer = await db.getReviewerByEmail(email);
+    if (!reviewer) {
+      reviewer = { id: uuidv4(), email, name, passwordHash: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), authProvider: 'google' };
+      await db.createItem('reviewers', reviewer);
+    }
+    const token = generateReviewerAccountToken(reviewer.id, reviewer.email, reviewer.name);
+    return res.redirect(base + '/reviewer/login?google_token=' + encodeURIComponent(token) + '&role=reviewer');
+  } catch (err) {
+    console.error('Google reviewer callback error:', err);
+    return res.redirect(base + '/reviewer/login?google_error=server_error');
   }
 });
 
@@ -1373,8 +1517,13 @@ app.post('/api/sessions/:id/submit', async (req, res) => {
 
     const mappedDecisions = decisions.map((d) => ({ imageId: d.imageId, liked: !!d.liked }));
     const mappedAnnotations = (annotations || []).map((a) => ({
-      imageId: a.imageId, x: a.x, y: a.y, comment: a.comment || '',
-      author: auth.reviewer.reviewerName, createdAt: a.createdAt || new Date().toISOString(),
+      imageId: a.imageId,
+      x: a.x,
+      y: a.y,
+      timestampSec: a.timestampSec,
+      comment: a.comment || '',
+      author: auth.reviewer.reviewerName,
+      createdAt: a.createdAt || new Date().toISOString(),
     }));
 
     if (existing) {
@@ -1538,3 +1687,4 @@ app.listen(PORT, () => {
 ╚══════════════════════════════════════════╝
   `);
 });
+

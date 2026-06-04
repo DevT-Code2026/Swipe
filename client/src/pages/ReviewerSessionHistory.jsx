@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../services/api';
 import BackButton from '../components/BackButton';
+import VideoPlayer from '../components/VideoPlayer';
 
 function openAsset(url) {
   if (!url) return;
@@ -24,6 +25,11 @@ function renderStatus(status) {
   return <span className={`badge ${cls}`}>{normalized}</span>;
 }
 
+function formatTimestamp(value) {
+  const totalSeconds = Math.max(0, Math.floor(Number(value) || 0));
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, '0')}`;
+}
+
 function HistoryThumb({ item, alt }) {
   const url = item?.url || '';
   return (
@@ -33,6 +39,54 @@ function HistoryThumb({ item, alt }) {
       ) : (
         <span className="history-thumb-fallback">F</span>
       )}
+    </div>
+  );
+}
+
+function HistoryVideoCommentPanel({ group }) {
+  const playerRef = useRef(null);
+  const [activeTimestamp, setActiveTimestamp] = useState(null);
+
+  if (!group?.url) return null;
+
+  return (
+    <div className="video-comment-panel">
+      <VideoPlayer
+        ref={playerRef}
+        src={group.url}
+        className="video-comment-player"
+        style={{ maxHeight: 'min(62vh, 520px)' }}
+      />
+      <div className="timestamp-comment-list">
+        {group.comments.map((item, index) => {
+          const hasTimestamp = item.timestampSec != null;
+          const isActive = hasTimestamp && activeTimestamp === item.timestampSec;
+
+          if (!hasTimestamp) {
+            return (
+              <div key={`${group.imageId}-static-${index}`} className="timestamp-comment-card">
+                <div className="timestamp-comment-copy">{item.comment || 'Comment added'}</div>
+              </div>
+            );
+          }
+
+          return (
+            <button
+              key={`${group.imageId}-timestamp-${index}`}
+              type="button"
+              className={`timestamp-comment-card timestamp-comment-button${isActive ? ' timestamp-comment-button-active' : ''}`}
+              onClick={() => {
+                playerRef.current?.seekTo?.(item.timestampSec);
+                playerRef.current?.pause?.();
+                setActiveTimestamp(item.timestampSec);
+              }}
+            >
+              <span className="timestamp-comment-badge">{formatTimestamp(item.timestampSec)}</span>
+              <span className="timestamp-comment-copy">{item.comment || 'Comment added'}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -81,6 +135,7 @@ export default function ReviewerSessionHistory() {
           fileName: item.fileName,
           rowOrder: item.rowOrder,
           url: item.url,
+          contentType: item.contentType,
           comments: [],
         };
       }
@@ -206,7 +261,7 @@ export default function ReviewerSessionHistory() {
               <div key={group.imageId} className="history-comment-card">
                 <div className="history-card">
                   <div className="history-card-main">
-                    <HistoryThumb item={group} alt={group.fileName || group.imageId} />
+                    {!isVideoAsset(group) && <HistoryThumb item={group} alt={group.fileName || group.imageId} />}
                     <div className="history-card-copy">
                       <div className="history-card-title">{group.fileName || group.imageId}</div>
                       <div className="history-card-meta">
@@ -228,12 +283,20 @@ export default function ReviewerSessionHistory() {
                       <div>
                         <div style={{ fontSize: 13, color: 'var(--text)' }}>{item.comment || 'Comment added'}</div>
                         <div style={{ fontSize: 11, color: 'var(--sub)', marginTop: 3 }}>
-                          Pin at x:{Math.round(Number(item.x) || 0)} y:{Math.round(Number(item.y) || 0)}
+                          {item.timestampSec != null
+                            ? <span className="timestamp-comment-inline">{formatTimestamp(item.timestampSec)}</span>
+                            : ('Pin at x:' + Math.round(Number(item.x) || 0) + ' y:' + Math.round(Number(item.y) || 0))}
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
+
+                {isVideoAsset(group) && group.url && (
+                  <div className="video-review-thread">
+                    <HistoryVideoCommentPanel group={group} />
+                  </div>
+                )}
               </div>
             ))
           )}

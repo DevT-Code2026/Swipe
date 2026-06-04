@@ -18,8 +18,23 @@ export function AuthProvider({ children }) {
     const bootstrap = async () => {
       setLoading(true);
       try {
-        if (token) {
-          api.setCreatorToken(token);
+        // Consume Google OAuth redirect token if present in URL
+        const oauth = api.consumeOAuthToken();
+        let activeToken = token;
+        let activeReviewerToken = reviewerAccountToken;
+
+        if (oauth && !oauth.error) {
+          if (oauth.role === 'creator') {
+            activeToken = oauth.token;
+            if (mounted) setToken(oauth.token);
+          } else if (oauth.role === 'reviewer') {
+            activeReviewerToken = oauth.token;
+            if (mounted) setReviewerAccountToken(oauth.token);
+          }
+        }
+
+        if (activeToken) {
+          api.setCreatorToken(activeToken);
           try {
             const data = await api.getMe();
             if (mounted) setCreator(data);
@@ -34,8 +49,8 @@ export function AuthProvider({ children }) {
           setCreator(null);
         }
 
-        if (reviewerAccountToken) {
-          api.setReviewerAccountToken(reviewerAccountToken);
+        if (activeReviewerToken) {
+          api.setReviewerAccountToken(activeReviewerToken);
           try {
             const data = await api.getReviewerMe();
             if (mounted) setReviewer(data);
@@ -58,6 +73,7 @@ export function AuthProvider({ children }) {
     return () => {
       mounted = false;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, reviewerAccountToken]);
 
   const login = async (email, password) => {
@@ -205,6 +221,8 @@ export function AuthProvider({ children }) {
       switchToSender,
       logout,
       reviewerLogout,
+      googleAuthCreator: () => api.googleAuthCreator(),
+      googleAuthReviewer: () => api.googleAuthReviewer(),
     }),
     [creator, token, reviewer, reviewerAccountToken, loading]
   );

@@ -1,4 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { flushSync } from 'react-dom';
 
 const DRAG_THRESHOLD = 110;
 const FLING_VELOCITY = 0.5;
@@ -21,11 +22,15 @@ export default function SwipeCard({
   onPinModeUsed,
   onPinModeTouchStart,
   navigationMode = false,
+  gestureLocked = false,
+  activeAnnotationIndex = null,
 }) {
   const cardRef = useRef(null);
   const nameInputRef = useRef(null);
   const commentInputRef = useRef(null);
   const startRef = useRef({ x: 0, y: 0, time: 0 });
+  const activePointersRef = useRef(new Set());
+  const multiTouchRef = useRef(false);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -41,35 +46,75 @@ export default function SwipeCard({
   const progress = Math.min(absX / DRAG_THRESHOLD, 1);
   const rotation = (offset.x / 15) * (1 - Math.abs(offset.y) / 600);
 
+  const resetDragState = useCallback(() => {
+    setIsDragging(false);
+    setOffset({ x: 0, y: 0 });
+  }, []);
+
+  // Opens the annotation dialog and immediately focuses the right input.
+  const openAnnotationDialog = useCallback(
+    (clientX, clientY) => {
+      if (!onAnnotationAdd || !cardRef.current) return;
+      onPinModeTouchStart?.();
+      const rect = cardRef.current.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * 100;
+      const y = ((clientY - rect.top) / rect.height) * 100;
+      const step = annotationName ? 'comment' : 'name';
+
+      // flushSync forces React to paint synchronously so the DOM node exists
+      // before we call .focus(), giving us auto-keyboard popup on mobile.
+      flushSync(() => {
+        setShowAnnotationInput({ x, y });
+        setPinStep(step);
+        setAnnotationComment('');
+      });
+
+      const target = step === 'comment' ? commentInputRef.current : nameInputRef.current;
+      if (target) {
+        target.focus({ preventScroll: false });
+        try {
+          const v = target.value || '';
+          if (typeof target.setSelectionRange === 'function') {
+            target.setSelectionRange(v.length, v.length);
+          }
+        } catch (_) {}
+      }
+    },
+    [onAnnotationAdd, onPinModeTouchStart, annotationName]
+  );
+
   const handlePointerDown = useCallback(
     (e) => {
-      if (disabled || isAnimating || showAnnotationInput) return;
+      if (disabled || isAnimating || showAnnotationInput || gestureLocked) return;
 
-      if (pinMode && onAnnotationAdd && cardRef.current) {
-        onPinModeTouchStart?.();
-        const rect = cardRef.current.getBoundingClientRect();
-        const x = ((e.clientX - rect.left) / rect.width) * 100;
-        const y = ((e.clientY - rect.top) / rect.height) * 100;
-        setShowAnnotationInput({ x, y });
-        setPinStep(annotationName ? 'comment' : 'name');
-        setAnnotationComment('');
+      if (e.pointerType === 'touch') {
+        activePointersRef.current.add(e.pointerId);
+        if (activePointersRef.current.size > 1) {
+          multiTouchRef.current = true;
+          resetDragState();
+          return;
+        }
+      }
+
+      if (pinMode && onAnnotationAdd) {
+        openAnnotationDialog(e.clientX, e.clientY);
         return;
       }
 
       setIsDragging(true);
       startRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
     },
-    [disabled, isAnimating, showAnnotationInput, pinMode, onAnnotationAdd, annotationName, onPinModeTouchStart]
+    [disabled, isAnimating, showAnnotationInput, gestureLocked, pinMode, onAnnotationAdd, resetDragState, openAnnotationDialog]
   );
 
   const handlePointerMove = useCallback(
     (e) => {
-      if (!isDragging) return;
+      if (!isDragging || gestureLocked || multiTouchRef.current) return;
       const dx = e.clientX - startRef.current.x;
       const dy = e.clientY - startRef.current.y;
       setOffset({ x: dx, y: dy });
     },
-    [isDragging]
+    [gestureLocked, isDragging]
   );
 
   const fling = useCallback(
@@ -93,9 +138,22 @@ export default function SwipeCard({
     [navigationMode, onDecision, onNavigate]
   );
 
+  const clearPointer = useCallback((pointerId) => {
+    activePointersRef.current.delete(pointerId);
+    if (activePointersRef.current.size < 2) {
+      multiTouchRef.current = false;
+    }
+  }, []);
+
   const handlePointerUp = useCallback(
     (e) => {
+      if (e.pointerType === 'touch') clearPointer(e.pointerId);
+
       if (!isDragging) return;
+      if (gestureLocked || multiTouchRef.current) {
+        resetDragState();
+        return;
+      }
       setIsDragging(false);
 
       const dt = Date.now() - startRef.current.time;
@@ -104,14 +162,8 @@ export default function SwipeCard({
       const velocity = Math.abs(dx) / dt;
 
       if (Math.abs(dx) < 5 && Math.abs(dy) < 5 && dt < 300) {
-        if (pinMode && onAnnotationAdd && cardRef.current) {
-          onPinModeTouchStart?.();
-          const rect = cardRef.current.getBoundingClientRect();
-          const x = ((e.clientX - rect.left) / rect.width) * 100;
-          const y = ((e.clientY - rect.top) / rect.height) * 100;
-          setShowAnnotationInput({ x, y });
-          setPinStep(annotationName ? 'comment' : 'name');
-          setAnnotationComment('');
+        if (pinMode && onAnnotationAdd) {
+          openAnnotationDialog(e.clientX, e.clientY);
         }
         return;
       }
@@ -122,44 +174,59 @@ export default function SwipeCard({
         setOffset({ x: 0, y: 0 });
       }
     },
-    [isDragging, absX, fling, pinMode, onAnnotationAdd, annotationName]
+    [isDragging, gestureLocked, absX, fling, pinMode, onAnnotationAdd, resetDragState, clearPointer, openAnnotationDialog]
+  );
+
+  const handlePointerCancel = useCallback(
+    (e) => {
+      if (e?.pointerType === 'touch') clearPointer(e.pointerId);
+      multiTouchRef.current = false;
+      resetDragState();
+    },
+    [resetDragState, clearPointer]
   );
 
   useEffect(() => {
     if (isDragging) {
       const move = (e) => handlePointerMove(e);
       const up = (e) => handlePointerUp(e);
+      const cancel = (e) => handlePointerCancel(e);
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', cancel);
       return () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', cancel);
       };
     }
-  }, [isDragging, handlePointerMove, handlePointerUp]);
+  }, [isDragging, handlePointerMove, handlePointerUp, handlePointerCancel]);
 
   useEffect(() => {
-    if (!showAnnotationInput) return;
-
-    const focusTarget = pinStep === 'name' ? nameInputRef.current : commentInputRef.current;
-    if (!focusTarget) return;
-
-    const timer = window.requestAnimationFrame(() => {
-      focusTarget.focus({ preventScroll: false });
-      const value = focusTarget.value || '';
-      if (typeof focusTarget.setSelectionRange === 'function') {
-        focusTarget.setSelectionRange(value.length, value.length);
-      }
-    });
-
-    return () => window.cancelAnimationFrame(timer);
-  }, [showAnnotationInput, pinStep]);
+    if (gestureLocked) {
+      // Zoom started — reset any in-progress drag
+      if (isDragging || offset.x !== 0 || offset.y !== 0) resetDragState();
+    } else {
+      // Zoom ended — clear stale pointer IDs so the next swipe isn't
+      // mistakenly treated as a multi-touch gesture.
+      activePointersRef.current.clear();
+      multiTouchRef.current = false;
+    }
+  }, [gestureLocked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAnnotationSubmit = () => {
     if (pinStep === 'name') {
       if (!annotationName.trim()) return;
       sessionStorage.setItem('reviewerName', annotationName.trim());
-      setPinStep('comment');
+
+      // Force synchronous render so the textarea is in the DOM before focus.
+      flushSync(() => {
+        setPinStep('comment');
+      });
+
+      if (commentInputRef.current) {
+        commentInputRef.current.focus({ preventScroll: false });
+      }
       return;
     }
 
@@ -205,6 +272,10 @@ export default function SwipeCard({
         className="swipe-card"
         style={{ ...cardStyle, cursor: pinMode ? 'crosshair' : undefined }}
         onPointerDown={handlePointerDown}
+        onPointerUp={(e) => {
+          if (e.pointerType === 'touch') clearPointer(e.pointerId);
+        }}
+        onPointerCancel={handlePointerCancel}
       >
         {cardContent ? (
           <div className="swipe-card-custom-content">{cardContent}</div>
@@ -245,6 +316,19 @@ export default function SwipeCard({
           </>
         )}
 
+        {/* Transparent tap layer that captures a single clean tap in pin mode */}
+        {pinMode && !showAnnotationInput && (
+          <button
+            type="button"
+            className="pin-capture-layer"
+            aria-label="Tap image to add comment"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              openAnnotationDialog(e.clientX, e.clientY);
+            }}
+          />
+        )}
+
         {offset.x > 0 && (
           <div
             className="stamp stamp-approve"
@@ -272,7 +356,7 @@ export default function SwipeCard({
         {annotations.map((pin, i) => (
           <div
             key={i}
-            className="pin-marker"
+            className={`pin-marker${activeAnnotationIndex === i ? ' pin-marker-active' : ''}`}
             style={{
               left: `${pin.x}%`,
               top: `${pin.y}%`,
@@ -284,7 +368,17 @@ export default function SwipeCard({
         ))}
 
         {showAnnotationInput && (
-          <div className="pin-sheet-overlay" onClick={(e) => { e.stopPropagation(); setShowAnnotationInput(null); }}>
+          <div
+            className="pin-sheet-overlay"
+            onPointerDown={(e) => {
+              // Only close if tapping the dark backdrop, not child elements
+              if (e.target === e.currentTarget) {
+                e.stopPropagation();
+                setShowAnnotationInput(null);
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div
               className="pin-marker"
               style={{
