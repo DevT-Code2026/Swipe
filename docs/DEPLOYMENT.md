@@ -1,16 +1,18 @@
 # Deployment Guide
 
-## Production architecture
+## Production Architecture
 
-- Application runs as a single containerized Node process.
-- Frontend static build (`client/dist`) and API routes are both served by `server.js`.
-- Runtime dependencies include Hostinger/MySQL database access and JWT configuration.
+- Application runs as a Hostinger Node.js Web App.
+- `app.js` is the Hostinger entry file.
+- `server.js` serves the Express API and the React static build.
+- Frontend static build output is `client/dist`.
+- Runtime data and media use Hostinger-compatible MySQL.
 
-## Hostinger Git deployment
+## Hostinger Git Settings
 
-Use these values when Hostinger asks for project settings:
+Use these values in Hostinger:
 
-- Framework: `Other` (or `Express` if Hostinger accepts it)
+- Framework: `Other` first, or `Express` if Hostinger accepts it
 - Root directory: `.`
 - Entry file: `app.js`
 - Install command: `npm install`
@@ -18,30 +20,19 @@ Use these values when Hostinger asks for project settings:
 - Start command: `npm start`
 - Output/build directory: `client/dist`
 
-If Hostinger shows "Unsupported framework or invalid project structure", choose `Other` instead of auto-detect and use the same commands above. Confirm the repository includes the root files `package.json`, `package-lock.json`, `app.js`, `server.js`, and `index.js`. Do not point Hostinger at only the `client/` folder unless you are deploying the frontend without the API.
+The repository root must contain:
 
-## Container image workflow
+- `package.json`
+- `package-lock.json`
+- `app.js`
+- `server.js`
+- `index.js`
 
-1. Login to ACR:
-   - `az acr login -n <acr-name>`
-2. Build image:
-   - `docker build -t <acr-login-server>/<image-name>:<tag> .`
-3. Push image:
-   - `docker push <acr-login-server>/<image-name>:<tag>`
+There should be no nested `client/package.json` or `api/package.json` for Hostinger Git deployment.
 
-## Azure Container Apps rollout
+## Required Runtime Configuration
 
-Update running app image:
-
-- `az containerapp update -n <app-name> -g <resource-group> --image <acr-login-server>/<image-name>:<tag>`
-
-Check revision and running state:
-
-- `az containerapp show -n <app-name> -g <resource-group> --query "{latestRevision:properties.latestRevisionName,readyRevision:properties.latestReadyRevisionName,state:properties.runningStatus,fqdn:properties.configuration.ingress.fqdn}" -o json`
-
-## Required runtime configuration
-
-Set environment variables in the runtime:
+Set these environment variables in Hostinger:
 
 - `DATABASE_URL`
   - or `HOSTINGER_DB_HOST`
@@ -51,46 +42,20 @@ Set environment variables in the runtime:
   - `HOSTINGER_DB_NAME`
 - `JWT_SECRET`
 
-Recommended optional values:
+Optional:
 
 - `JWT_CREATOR_EXPIRY`
 - `JWT_REVIEWER_EXPIRY`
-- `CLOUDFLARE_CDN_DOMAIN`
-- `CLOUDFLARE_TOKEN_SECRET`
-- `SENDGRID_API_KEY`
-- `NOTIFICATION_FROM_EMAIL`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_CALLBACK_BASE`
 
-## Post-deploy validation (required)
+## Validation
 
-1. Health endpoint:
-   - `curl -I https://<domain>/api/health`
-2. Canonical redirect check (`www` -> apex):
-   - `curl -I https://www.<domain>/api/health`
-3. Auth and API sanity:
-   - `GET /api/health` should be reachable
-   - Protected creator routes should reject unauthenticated access (`401`)
+After deployment:
 
-Expected:
-
-- Apex health returns `200`.
-- `www` host returns `301` redirect to apex.
-- App reports running/ready revision in Container Apps.
-
-## Domain behavior
-
-Canonical host middleware enforces redirect from `www.giggidy.work` to `giggidy.work`.
-
-## Security deployment checks
-
-- Ensure no hardcoded secrets in repo or build context.
-- Keep all secrets in Container App environment settings.
-- Rotate any secret immediately if exposure is suspected.
-
-## Rollback strategy
-
-If a revision fails validation:
-
-1. Roll back by redeploying the previous known-good image tag.
-2. Confirm ready revision state and health endpoint.
-3. Re-run canonical redirect and protected-route checks.
-
+- Visit `/api/health`
+- Confirm it returns HTTP `200`
+- Open the root app URL
+- Register/login as a creator
+- Create a session and upload a small test image

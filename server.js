@@ -21,7 +21,7 @@ const storage = require('./api/src/services/storage');
 const { generateExport } = require('./api/src/services/exportService');
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 const MAX_ACCOUNT_STORAGE_BYTES = 500 * 1024 * 1024;
 const uploadTempDir = path.join(os.tmpdir(), 'creativeswipe-uploads');
 fs.mkdirSync(uploadTempDir, { recursive: true });

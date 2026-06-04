@@ -9,12 +9,12 @@
   "description": "CreativeSwipe — Collaborative Creative Review Platform",
   "scripts": {
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:client\"",
-    "dev:client": "cd client && npm run dev",
-    "dev:api": "cd api && npm start",
-    "build": "npm install --prefix client && npm run build --prefix client",
+    "dev:client": "vite --config client/vite.config.js",
+    "dev:api": "node app.js",
+    "build": "vite build --config client/vite.config.js",
     "test:smoke": "playwright test tests/smoke.spec.js",
     "start": "node app.js",
-    "install:all": "npm install && npm install --prefix client",
+    "install:all": "npm install",
     "docker:build": "docker build -t creativeswipe .",
     "docker:run": "docker run -p 8080:8080 --env-file .env creativeswipe"
   },
@@ -25,11 +25,19 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.1.1",
     "mysql2": "^3.11.5",
+    "qrcode": "^1.5.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.0",
     "uuid": "^9.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.54.1",
-    "concurrently": "^8.2.2"
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "vite": "^5.1.0"
   }
 }

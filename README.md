@@ -6,48 +6,43 @@ CreativeSwipe is a collaborative creative review platform for teams to share ass
 
 - Creator authentication and dashboard
 - Session creation by client and project
-- Multi-image upload with platform template context (LinkedIn, Instagram, YouTube)
+- Multi-image upload with platform template context
 - Shareable reviewer links with reviewer identity capture
 - Reviewer swipe/tap review flow with comments
-- Project-level done/pending reviewer status in dashboard
-- Reviewer history (same email, same client/project)
+- Reviewer history and project progress tracking
 - Export support for session results
 
 ## Tech stack
 
 - Frontend: React + Vite
-- Backend: Node.js + Azure Functions-style handlers
-- Data: Hostinger/MySQL via `mysql2` (with local in-memory fallback)
-- Media: MySQL-backed blob table (with local in-memory fallback)
+- Backend: Node.js + Express
+- Data: Hostinger/MySQL via `mysql2`
+- Media: MySQL-backed blob table
 - Auth: JWT
-- Deployment: Docker + Azure Container Apps
+- Deployment: Hostinger Node.js Web App
 
-## Project structure
+## Hostinger structure
 
-- `client/` – React app
-- `api/` – Azure Functions workspace artifacts + shared backend service code
-- `api/src/services/` – Data, storage, token, export services
-- `server.js` – Main Express API and static app server
-- `docs/` – Documentation and deployment templates
+Hostinger should use the repository root as the application root:
 
-## Quick start
+- `package.json` - single Node package manifest
+- `package-lock.json` - single dependency lockfile
+- `app.js` - Hostinger entry file
+- `server.js` - Express API and static app server
+- `client/` - React source
+- `api/src/services/` - shared backend services
 
-1. Install dependencies:
-   - `npm run install:all`
-2. Copy env file:
-   - Create `.env` from `.env.example`
-3. Run development:
-   - `npm run dev`
-4. Build frontend:
-   - `npm run build`
-5. Run production server locally:
-   - `npm start`
+## Hostinger settings
 
-Default local server: `http://localhost:8080`
+- Framework: `Other` or `Express`
+- Root directory: `.`
+- Entry file: `app.js`
+- Install command: `npm install`
+- Build command: `npm run build`
+- Start command: `npm start`
+- Output directory: `client/dist`
 
 ## Environment variables
-
-See `.env.example` for full list.
 
 Required for Hostinger/MySQL-backed mode:
 
@@ -59,30 +54,12 @@ Required for Hostinger/MySQL-backed mode:
   - `HOSTINGER_DB_NAME`
 - `JWT_SECRET`
 
-Optional:
-
-- `JWT_CREATOR_EXPIRY`
-- `JWT_REVIEWER_EXPIRY`
-- `CLOUDFLARE_CDN_DOMAIN`
-- `CLOUDFLARE_TOKEN_SECRET`
-- `SENDGRID_API_KEY`
-- `NOTIFICATION_FROM_EMAIL`
-
 If MySQL settings are not configured, local in-memory fallback is used.
 
-## Documentation index
+## Local commands
 
-- `docs/LOCAL_DEVELOPMENT.md`
-- `docs/API_REFERENCE.md`
-- `docs/DEPLOYMENT.md`
-- `docs/PRD_Azure_Deployment_Template.md`
-- `docs/Azure_Deployment_Report_and_Connection_Template.md`
-
-## Key API health check
-
-- `GET /api/health`
-
-## Notes
-
-- Canonical redirect is enforced from `www.giggidy.work` to `giggidy.work`.
-- API and frontend are served by the same Node process in production.
+- Install dependencies: `npm install`
+- Run development frontend: `npm run dev:client`
+- Build frontend: `npm run build`
+- Start production server locally: `npm start`
+- Health check: `GET /api/health`
